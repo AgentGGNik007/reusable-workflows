@@ -1,0 +1,43 @@
+name: Reusable - Changelog
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: Pfad zur cliff.toml im aufrufenden Repo
+        required: false
+        type: string
+        default: cliff.toml
+      changelog_path:
+        description: Zielpfad der CHANGELOG.md
+        required: false
+        type: string
+        default: docs/CHANGELOG.md
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog with git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: ${{ inputs.config }}
+          args: --output ${{ inputs.changelog_path }}
+
+      - name: Commit changelog
+        run: |
+          if ! git diff --quiet -- "${{ inputs.changelog_path }}"; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add "${{ inputs.changelog_path }}"
+            git commit -m "docs(changelog): update changelog"
+            git push
+          fi
