@@ -1,0 +1,96 @@
+name: Reusable - Issue Creation
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  create-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Parse docs/issues.md and create issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PYEOF'
+          import re, subprocess, sys, pathlib
+
+          PATH = pathlib.Path("docs/issues.md")
+
+          def main():
+              if not PATH.exists():
+                  return
+
+              content = PATH.read_text(encoding="utf-8")
+              raw_blocks = re.split(r"(?m)^---[ \t]*$", content)
+
+              kept_blocks = []
+              created_any = False
+
+              for raw in raw_blocks:
+                  block = raw.strip()
+
+                  if not block or block.startswith("<!--"):
+                      kept_blocks.append(raw.strip("\n"))
+                      continue
+
+                  title_match = re.search(r"^##\s+(.+)$", block, re.MULTILINE)
+                  if not title_match:
+                      kept_blocks.append(raw.strip("\n"))
+                      continue
+
+                  title = title_match.group(1).strip()
+
+                  labels_match = re.search(r"^labels:\s*(.*)$", block, re.MULTILINE)
+                  labels = []
+                  if labels_match:
+                      labels = [l.strip() for l in labels_match.group(1).split(",") if l.strip()]
+
+                  body_match = re.search(r"^body:\s*(.*)", block, re.MULTILINE | re.DOTALL)
+                  body = body_match.group(1).strip() if body_match else ""
+
+                  for label in labels:
+                      subprocess.run(
+                          ["gh", "label", "create", label, "--color", "ededed", "--force"],
+                          capture_output=True
+                      )
+
+                  cmd = ["gh", "issue", "create", "--title", title, "--body", body]
+                  for label in labels:
+                      cmd += ["--label", label]
+
+                  result = subprocess.run(cmd, capture_output=True, text=True)
+
+                  if result.returncode == 0:
+                      print(f"Issue erstellt: {title} -> {result.stdout.strip()}")
+                      created_any = True
+                  else:
+                      print(f"Fehler beim Anlegen von '{title}': {result.stderr.strip()}", file=sys.stderr)
+                      kept_blocks.append(raw.strip("\n"))
+
+              new_content = "\n---\n".join(kept_blocks).strip() + "\n"
+              PATH.write_text(new_content, encoding="utf-8")
+
+              if created_any:
+                  print("::notice::Issues wurden erstellt und aus docs/issues.md entfernt")
+
+          main()
+          PYEOF
+
+      - name: Commit cleaned issues.md
+        run: |
+          if ! git diff --quiet -- docs/issues.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add docs/issues.md
+            git commit -m "chore(issues): remove processed issue blocks"
+            git push
+          fi
